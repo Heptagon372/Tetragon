@@ -6,6 +6,7 @@ import Dashboard from './features/dashboard/Dashboard'
 import Collect from './features/collect/Collect'
 import QuickList from './features/quick/QuickList'
 import Categories from './features/categories/Categories'
+import StockScan from './features/stockscan/StockScan'
 import Products from './features/products/Products'
 import ProductDetail from './features/products/ProductDetail'
 import Pricing from './features/pricing/Pricing'
@@ -24,6 +25,7 @@ const NAV = [
   { to: '/quick', label: '빠른 등록' },
   { to: '/collect', label: 'URL 수집' },
   { to: '/categories', label: '카테고리 수집' },
+  { to: '/stock-scan', label: '품절 스캔' },
   { to: '/products', label: '상품' },
   { to: '/audit', label: '상품 점검' },
   { to: '/pricing', label: '가격 정책' },
@@ -60,6 +62,7 @@ export default function App() {
           <Route path="/quick" element={<QuickList />} />
           <Route path="/collect" element={<Collect />} />
           <Route path="/categories" element={<Categories />} />
+          <Route path="/stock-scan" element={<StockScan />} />
           <Route path="/products" element={<Products />} />
           <Route path="/products/:id" element={<ProductDetail />} />
           <Route path="/audit" element={<Audit />} />

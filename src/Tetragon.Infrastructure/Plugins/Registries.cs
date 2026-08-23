@@ -29,6 +29,17 @@ public sealed class CategoryCrawlerRegistry(IEnumerable<ICategoryCrawler> crawle
         _crawlers.FirstOrDefault(c => c.SupplierCode.Equals(supplierCode, StringComparison.OrdinalIgnoreCase));
 }
 
+/// <summary>DI에 등록된 재고 스캐너를 공급처 코드로 해석.</summary>
+public sealed class StockScannerRegistry(IEnumerable<IStockScanner> scanners) : IStockScannerRegistry
+{
+    private readonly List<IStockScanner> _scanners = scanners.ToList();
+
+    public IReadOnlyList<IStockScanner> All => _scanners;
+
+    public IStockScanner? Resolve(string supplierCode) =>
+        _scanners.FirstOrDefault(s => s.SupplierCode.Equals(supplierCode, StringComparison.OrdinalIgnoreCase));
+}
+
 /// <summary>DI에 등록된 발주 플러그인을 공급처 코드로 해석.</summary>
 public sealed class SupplierOrderPluginRegistry(IEnumerable<ISupplierOrderPlugin> plugins) : ISupplierOrderPluginRegistry
 {

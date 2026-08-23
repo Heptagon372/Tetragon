@@ -150,14 +150,33 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "busy": _fetch_lock.locked()})
         self._send(404, {"error": "not found"})
 
+    def _read_body(self) -> bytes:
+        # .NET JsonContent는 Content-Length 없이 chunked 전송을 쓴다.
+        # http.server는 Content-Length만 읽으므로 chunked를 직접 디코드해야 본문을 놓치지 않는다.
+        te = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in te:
+            chunks = []
+            while True:
+                size_line = self.rfile.readline().strip()
+                if not size_line:
+                    continue
+                size = int(size_line.split(b";")[0], 16)
+                if size == 0:
+                    self.rfile.readline()  # 마지막 CRLF
+                    break
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline()      # 각 청크 뒤 CRLF
+            return b"".join(chunks)
+        length = int(self.headers.get("Content-Length", "0"))
+        return self.rfile.read(length) if length else b""
+
     def do_POST(self):
         if self.path != "/fetch":
             return self._send(404, {"error": "not found"})
         if API_KEY and self.headers.get("X-Api-Key") != API_KEY:
             return self._send(401, {"error": "unauthorized"})
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            req = json.loads(self.rfile.read(length) or b"{}")
+            req = json.loads(self._read_body() or b"{}")
         except Exception as e:
             return self._send(400, {"error": f"bad request: {e}"})
         try:

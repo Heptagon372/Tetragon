@@ -22,7 +22,7 @@ namespace Tetragon.Plugins.Suppliers;
 /// </summary>
 public sealed class CoupangSupplierPlugin(
     IBrowserFetcher browserFetcher,
-    ILogger<CoupangSupplierPlugin> logger) : ISupplierPlugin, ICategoryCrawler
+    ILogger<CoupangSupplierPlugin> logger) : ISupplierPlugin, ICategoryCrawler, IStockScanner
 {
     public string Code => "coupang";
     public string DisplayName => "쿠팡";
@@ -193,6 +193,134 @@ public sealed class CoupangSupplierPlugin(
             HasMore = items.Count > 0,   // 쿠팡은 총 개수를 안정적으로 안 주므로 결과 유무로 판단
         };
     }
+
+    // ── 품절·저재고 스캔 (IStockScanner) ──────────────────────────
+    // 목록 페이지 하나(1 fetch)에서 상품별 재고 상태를 읽는다. 상세를 상품마다 열지 않아
+    // 요청 수가 페이지 수만큼으로 줄어 IP 차단 위험이 크게 낮아진다.
+    // 파싱 규약은 실제 목록 HTML로 검증됨(파서 v1.0.0):
+    //   · 카드 앵커  : <a href="/vp/products/{id}"> (DOM). 다음 앵커 전까지가 한 카드.
+    //   · 상품명     : 카드 안 <img alt="...">
+    //   · 판매가     : PriceArea_priceArea__ 안 첫 <span>{n}원</span> (없으면 {n,nnn}원 폴백)
+    //   · 저재고     : "단 N개 남음" (딜 카운트다운 "N일 남음"과 구분 — 개/일)
+    //   · 품절       : 임베드 JSON의 soldoutArea":{..."soldout":true} → 앞쪽 가장 가까운 상품에 매핑
+    // ⚠️ custom-oos 클래스는 재고가 아니라 가격/할인 스타일이라 무시한다.
+    // (IStockScanner.SupplierCode는 위의 SupplierCode => Code 로 이미 충족)
+    public async Task<StockScanPage> ScanStockAsync(StockScanRequest request, CancellationToken ct)
+    {
+        if (!browserFetcher.IsAvailable)
+            throw new PermanentScrapeException(
+                "쿠팡 재고 스캔에는 브라우저 fetch 사이드카가 필요합니다 (Akamai 차단).");
+
+        var page = Math.Max(1, request.Page);
+        Uri listUrl;
+        if (!string.IsNullOrWhiteSpace(request.Keyword))
+            listUrl = new Uri($"https://www.coupang.com/np/search?q={Uri.EscapeDataString(request.Keyword)}&page={page}");
+        else if (!string.IsNullOrWhiteSpace(request.CategoryCode))
+            listUrl = new Uri($"https://www.coupang.com/np/categories/{request.CategoryCode}?page={page}");
+        else
+            throw new PermanentScrapeException("쿠팡 재고 스캔에는 검색어(Keyword) 또는 카테고리 코드가 필요합니다.");
+
+        var result = await browserFetcher.FetchAsync(new BrowserFetchRequest
+        {
+            Url = listUrl,
+            Behavior = BehaviorProfile.Human,
+            ProxyPolicy = "residential-kr",
+            SessionKey = $"coupang:{request.TenantId}",
+        }, ct);
+
+        if (result.Blocked)
+            throw new TransientScrapeException("쿠팡 목록이 차단되었습니다 (Akamai).");
+
+        var items = ParseListingStock(result.Html);
+        logger.LogInformation("쿠팡 재고 스캔 '{Q}' p{Page}: {Total}개 중 품절 {Sold}·저재고 {Low}",
+            request.Keyword ?? request.CategoryCode, page, items.Count,
+            items.Count(i => i.Status == StockStatus.SoldOut),
+            items.Count(i => i.Status == StockStatus.LowStock));
+
+        return new StockScanPage { Items = items, Page = page, HasMore = items.Count > 0 };
+    }
+
+    // 목록 HTML → 상품별 재고. static이라 실제 저장된 HTML로 단위 테스트 가능(요청 0).
+    public static IReadOnlyList<StockScanItem> ParseListingStock(string html)
+    {
+        if (string.IsNullOrEmpty(html)) return [];
+
+        // 1) 임베드 JSON에서 id → 품절 여부 맵 (soldoutArea 앞쪽 가장 가까운 상품 링크에 귀속)
+        var soldOut = new HashSet<string>();
+        foreach (Match m in SoldoutAreaRegex.Matches(html))
+        {
+            if (m.Groups["flag"].Value != "true") continue;
+            var backStart = Math.Max(0, m.Index - 4000);
+            var back = html.Substring(backStart, m.Index - backStart);
+            var link = LastProductLink(back);
+            if (link is not null) soldOut.Add(link);
+        }
+
+        // 2) DOM 카드 단위(<a href="/vp/products/{id}"> ~ 다음 앵커)로 파싱
+        var cards = DomCardAnchorRegex.Matches(html);
+        var items = new List<StockScanItem>();
+        var seen = new HashSet<string>();
+        for (int i = 0; i < cards.Count; i++)
+        {
+            var id = cards[i].Groups[1].Value;
+            if (!seen.Add(id)) continue;   // 같은 상품 재등장(광고/중복) 무시
+            var start = cards[i].Index;
+            var end = i + 1 < cards.Count ? cards[i + 1].Index : Math.Min(html.Length, start + 6000);
+            var seg = html.Substring(start, end - start);
+
+            var nameM = ImgAltRegex.Match(seg);
+            var name = nameM.Success ? System.Net.WebUtility.HtmlDecode(nameM.Groups[1].Value).Trim() : null;
+
+            decimal? price = null;
+            var priceM = PriceSpanRegex.Match(seg);
+            if (!priceM.Success) priceM = PriceWonRegex.Match(seg);
+            if (priceM.Success && decimal.TryParse(priceM.Groups[1].Value.Replace(",", ""),
+                    NumberStyles.Integer, CultureInfo.InvariantCulture, out var p))
+                price = p;
+
+            int? remaining = null;
+            var lowM = LowStockRegex.Match(seg);
+            if (lowM.Success && int.TryParse(lowM.Groups[1].Value, out var n)) remaining = n;
+
+            var status = soldOut.Contains(id) ? StockStatus.SoldOut
+                : remaining is not null ? StockStatus.LowStock
+                : StockStatus.InStock;
+
+            items.Add(new StockScanItem
+            {
+                SourceProductId = id,
+                Url = $"https://www.coupang.com/vp/products/{id}",
+                Name = name,
+                Price = price,
+                Currency = "KRW",
+                Status = status,
+                Remaining = remaining,
+            });
+        }
+        return items;
+    }
+
+    private static string? LastProductLink(string s)
+    {
+        string? last = null;
+        foreach (Match m in ProductIdRegex.Matches(s)) last = m.Groups[1].Value;
+        return last;
+    }
+
+    // 스캔 파서 정규식 (실측 검증)
+    private static readonly Regex DomCardAnchorRegex =
+        new(@"href=""/vp/products/(\d+)", RegexOptions.Compiled);
+    private static readonly Regex ImgAltRegex =
+        new(@"<img\s+alt=""([^""]+)""", RegexOptions.Compiled);
+    private static readonly Regex PriceSpanRegex =
+        new(@"PriceArea_priceArea__\w+"".*?<span>([\d,]+)\s*원", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex PriceWonRegex =
+        new(@">(\d{1,3}(?:,\d{3})+)\s*원", RegexOptions.Compiled);
+    private static readonly Regex LowStockRegex =
+        new(@"단\s*(\d+)개\s*남음", RegexOptions.Compiled);
+    private static readonly Regex SoldoutAreaRegex =
+        new(@"soldoutArea\\"":\{\\""soldOutText\\"":\\""[^\\]*\\"",\\""soldout\\"":(?<flag>true|false)\}",
+            RegexOptions.Compiled);
 
     // ── 파싱 헬퍼 ─────────────────────────────────────────────────
     private static readonly Regex ProductIdRegex =

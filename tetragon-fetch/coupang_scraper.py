@@ -148,6 +148,12 @@ def extract_options(html):
 def is_blocked(html, status=200):
     if status in (403, 428):
         return True
+    if not html:
+        return True
+    # 쿠팡 403 차단 페이지는 한글이라 "Access Denied"가 없다. 실측 마커로 판별한다.
+    ko_markers = ("사용권한이 없습니다", "id=\"error403\"", "Error 403", "'title': 'Error 403'")
+    if any(n in html for n in ko_markers):
+        return True
     return any(n in html for n in ("Access Denied", "errors.edgesuite.net")) and len(html) < 5000
 
 def parse_product(pid, url, html):
@@ -223,7 +229,7 @@ def session_clear():
 
 # ─────────────────────────── 수집 ───────────────────────────
 
-def scrape(arg, limit, headless, proxy, delay_min, delay_max, cache_ttl, use_cache):
+def scrape(arg, limit, headless, proxy, delay_min, delay_max, cache_ttl, use_cache, dump_html=False):
     pid = product_id_from(arg)
     is_search = pid is None
 
@@ -320,6 +326,13 @@ def scrape(arg, limit, headless, proxy, delay_min, delay_max, cache_ttl, use_cac
             if c:
                 results.append(c); from_cache += 1
             continue
+        if dump_html and item.get("html"):
+            try:
+                with open(f"{item['id']}.html", "w", encoding="utf-8") as f:
+                    f.write(item["html"])
+                print(f"    · 원본 HTML 저장: {item['id']}.html ({len(item['html']):,} bytes)", flush=True)
+            except Exception:
+                pass
         parsed = parse_product(item["id"], item["url"], item["html"])
         if not parsed.get("blocked"):
             cache_put(item["id"], parsed)     # 성공한 것만 캐시
@@ -345,11 +358,12 @@ def main():
     ap.add_argument("--delay-max", type=float, default=8.0, help="상품 간 최대 대기초 (기본 8)")
     ap.add_argument("--cache-ttl", type=float, default=24, help="캐시 유효시간(시간). 0=무한 (기본 24)")
     ap.add_argument("--no-cache", action="store_true", help="캐시 무시하고 새로 수집")
+    ap.add_argument("--dump-html", action="store_true", help="수집한 상품의 원본 HTML을 {pid}.html로 저장 (옵션 구조 조사용)")
     ap.add_argument("--out", default="coupang_result.json")
     a = ap.parse_args()
 
     data = scrape(a.query, a.limit, a.headless, a.proxy,
-                  a.delay_min, a.delay_max, a.cache_ttl, not a.no_cache)
+                  a.delay_min, a.delay_max, a.cache_ttl, not a.no_cache, a.dump_html)
 
     print("\n" + "=" * 60)
     if data["search_blocked"]:

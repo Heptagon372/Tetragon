@@ -616,7 +616,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export type StockStatus = 'InStock' | 'LowStock' | 'SoldOut'
+
+export interface StockScanItem {
+  sourceProductId: string
+  url: string
+  name?: string
+  price?: number
+  currency: string
+  status: StockStatus
+  remaining?: number
+}
+
+export interface StockScanResult {
+  supplier: string
+  keyword?: string
+  categoryCode?: string
+  scannedPages: number
+  totalScanned: number
+  soldOutCount: number
+  lowStockCount: number
+  items: StockScanItem[]
+  error?: string
+}
+
 export const api = {
+  // 품절·저재고 스캔
+  stockScan: (body: {
+    keyword?: string
+    categoryCode?: string
+    maxPages?: number
+    includeInStock?: boolean
+  }) =>
+    request<StockScanResult>('/stock-scan/coupang', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   // 수집
   collect: (urls: string[], pricingPolicyId?: string) =>
     request<{ jobIds: string[]; accepted: number; rejected: string[] }>('/products/collect', {

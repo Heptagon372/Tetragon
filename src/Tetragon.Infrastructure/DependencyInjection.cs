@@ -107,6 +107,7 @@ public static class DependencyInjection
         services.AddSingleton<ISupplierPluginRegistry, SupplierPluginRegistry>();
         services.AddSingleton<IMarketplaceAdapterRegistry, MarketplaceAdapterRegistry>();
         services.AddSingleton<ICategoryCrawlerRegistry, CategoryCrawlerRegistry>();
+        services.AddSingleton<IStockScannerRegistry, StockScannerRegistry>();
         services.AddSingleton<ISupplierOrderPluginRegistry, SupplierOrderPluginRegistry>();
 
         // ── 엑셀 (마켓별 양식은 호스트에서 IMarketExcelTemplate으로 등록) ──

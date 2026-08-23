@@ -41,6 +41,8 @@ builder.Services.AddSingleton<ISupplierPlugin, ElevenStSupplierPlugin>();
 builder.Services.AddSingleton<CoupangSupplierPlugin>();
 builder.Services.AddSingleton<ISupplierPlugin>(sp => sp.GetRequiredService<CoupangSupplierPlugin>());
 builder.Services.AddSingleton<ICategoryCrawler>(sp => sp.GetRequiredService<CoupangSupplierPlugin>());
+// 품절·저재고 스캔 — 목록 페이지에서 재고 신호를 읽는다 (같은 인스턴스, 추가 인터페이스)
+builder.Services.AddSingleton<IStockScanner>(sp => sp.GetRequiredService<CoupangSupplierPlugin>());
 // 도매꾹·시뮬레이션은 카테고리 크롤링도 지원 — 같은 인스턴스를 두 인터페이스로 노출한다
 builder.Services.AddSingleton<DomeggookSupplierPlugin>();
 builder.Services.AddSingleton<ISupplierPlugin>(sp => sp.GetRequiredService<DomeggookSupplierPlugin>());
@@ -114,6 +116,7 @@ app.MapImportEndpoints();
 app.MapProductEndpoints();
 app.MapJobEndpoints();
 app.MapCategoryEndpoints();
+app.MapStockScanEndpoints();
 app.MapExcelEndpoints();
 app.MapWalletEndpoints();
 app.MapShippingPlaceEndpoints();
