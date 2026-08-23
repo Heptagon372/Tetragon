@@ -114,14 +114,36 @@ def extract_images(html, cap=20):
     return imgs
 
 def extract_options(html):
-    groups = {}
-    for m in re.finditer(r'"attributeTypeName"\s*:\s*"([^"]+)"\s*,\s*"attributeValueName"\s*:\s*"([^"]+)"', html):
-        t, v = m.group(1).strip(), m.group(2).strip()
-        if t and v:
-            groups.setdefault(t, [])
-            if v not in groups[t]:
-                groups[t].append(v)
-    return [{"name": k, "values": v} for k, v in groups.items()]
+    """쿠팡 fashion-option DOM에서 옵션 그룹 추출 (실측 검증).
+    · 드롭다운형(사이즈): fashion-option-select__content 의 <li> 텍스트
+    · 스와치형(색상): fashion-option__button-list 의 이미지 <li> 개수 + 선택 라벨
+    조합별 가격은 정적 HTML에 없어(선택 시 API 로드) 변형 가격은 추출하지 않는다.
+    """
+    groups = []
+    for sec in re.split(r'<section class="twc-my-\[16px\]', html):
+        if "fashion-option-select" not in sec and "fashion-option__button-list" not in sec:
+            continue
+        mname = re.search(r'twc-font-bold twc-mb-\[4px\][^>]*>(?:<span>)?([^<:]{1,20})', sec)
+        if not mname:
+            continue
+        name = mname.group(1).strip()
+        values = []
+        content = re.search(r'fashion-option-select__content.*?</ul>', sec, re.S)
+        if content:
+            for li in re.findall(r'<li[^>]*>([^<]{1,40})</li>', content.group(0)):
+                v = li.strip()
+                if v and v not in values:
+                    values.append(v)
+        if not values:
+            blist = re.search(r'fashion-option__button-list.*?</ul>', sec, re.S)
+            if blist:
+                cnt = len(re.findall(r'<li>', blist.group(0)))
+                sel = re.search(r'fashion-option__label-item-text[^>]*>([^<]+)', sec)
+                if cnt:
+                    values = [f"{cnt}종" + (f" (선택:{sel.group(1).strip()})" if sel else "")]
+        if values:
+            groups.append({"name": name, "values": values})
+    return groups
 
 def is_blocked(html, status=200):
     if status in (403, 428):

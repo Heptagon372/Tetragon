@@ -280,109 +280,99 @@ public sealed class CoupangSupplierPlugin(
     private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
     // ── 옵션/변형 파싱 ────────────────────────────────────────────
-    // 쿠팡 상세는 옵션을 여러 형태로 임베드한다. 전략을 순서대로 시도하고,
-    // 무엇도 못 찾으면 단일 변형으로 폴백한다(옵션 없는 상품이 다수).
-    // ⚠️ 정확한 키/셀렉터는 라이브 검증(inspect_options.py)으로 튜닝 대상 — 파서 v1.0.0.
+    // 쿠팡 상세의 옵션은 fashion-option DOM으로 렌더된다 (실측 검증, product.html 기준):
+    //   · 그룹명   : <div class="…twc-font-bold twc-mb-[4px]…">사이즈</div> (색상은 <span>색상</span>)
+    //   · 드롭다운형(사이즈): fashion-option-select__content 의 <li> 텍스트 = L,M,S,XL,…
+    //   · 스와치형(색상)   : fashion-option__button-list 의 이미지 <li> (텍스트 없음) → 개수+선택라벨
+    // 조합별 가격/재고는 정적 HTML에 없고(선택 시 API 로드) → 변형은 단일 기본만 만든다.
+    // 옵션이 없거나 파싱 실패면 단일 변형으로 안전 폴백.
 
-    // 전략 A: 임베드 JSON의 속성 쌍 "attributeTypeName":"색상","attributeValueName":"블랙"
-    private static readonly Regex AttrPairRegex = new(
-        @"""attributeTypeName""\s*:\s*""(?<t>[^""]+)""\s*,\s*""attributeValueName""\s*:\s*""(?<v>[^""]+)""",
-        RegexOptions.Compiled);
-
-    // 전략 A': vendorItem 배열 — itemName + (선택) 가격/재고
-    private static readonly Regex VendorItemRegex = new(
-        @"""vendorItemId""\s*:\s*""?(?<sku>\d+)""?[^}]*?""itemName""\s*:\s*""(?<name>[^""]+)""(?:[^}]*?""(?:salePrice|discountedPrice|price)""\s*:\s*(?<price>\d+))?",
-        RegexOptions.Compiled);
-
-    // 전략 B: DOM <select> 옵션 — <option value="...">라벨</option>
-    private static readonly Regex SelectRegex = new(
-        @"<select[^>]*>(?<body>.*?)</select>", RegexOptions.Compiled | RegexOptions.Singleline);
-    private static readonly Regex OptionTagRegex = new(
-        @"<option[^>]*value=""(?<val>[^""]+)""[^>]*>(?<label>[^<]+)</option>",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex OptionSectionRegex = new(
+        @"<section class=""twc-my-\[16px\]", RegexOptions.Compiled);
+    private static readonly Regex OptionNameRegex = new(
+        @"twc-font-bold twc-mb-\[4px\][^>]*>(?:<span>)?([^<:]{1,20})", RegexOptions.Compiled);
+    private static readonly Regex DropdownContentRegex = new(
+        @"fashion-option-select__content.*?</ul>", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex LiTextRegex = new(
+        @"<li[^>]*>([^<]{1,40})</li>", RegexOptions.Compiled);
+    private static readonly Regex SwatchListRegex = new(
+        @"fashion-option__button-list.*?</ul>", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex SwatchLiRegex = new(@"<li>", RegexOptions.Compiled);
+    private static readonly Regex SelectedLabelRegex = new(
+        @"fashion-option__label-item-text[^>]*>([^<]+)", RegexOptions.Compiled);
 
     private static (List<RawOptionGroup> Groups, List<RawVariant> Variants) ExtractOptionsAndVariants(
         string html, string productId, decimal basePrice, bool soldOut, string? mainImage)
     {
+        var groups = new List<RawOptionGroup>();
         try
         {
-            // 전략 A: 속성 타입→값 그룹핑
-            var byType = new Dictionary<string, List<string>>();
-            foreach (Match m in AttrPairRegex.Matches(html))
+            // fashion-option 영역의 각 그룹은 <section class="twc-my-[16px] …"> 로 시작한다.
+            var parts = OptionSectionRegex.Split(html);
+            foreach (var sec in parts)
             {
-                var t = m.Groups["t"].Value.Trim();
-                var v = m.Groups["v"].Value.Trim();
-                if (t.Length == 0 || v.Length == 0) continue;
-                if (!byType.TryGetValue(t, out var list)) byType[t] = list = [];
-                if (!list.Contains(v)) list.Add(v);
-            }
+                if (!sec.Contains("fashion-option-select", StringComparison.Ordinal)
+                    && !sec.Contains("fashion-option__button-list", StringComparison.Ordinal))
+                    continue;
 
-            // 전략 A': vendorItem → 변형
-            var variants = new List<RawVariant>();
-            foreach (Match m in VendorItemRegex.Matches(html))
-            {
-                var sku = m.Groups["sku"].Value;
-                if (variants.Exists(x => x.SourceSkuId == sku)) continue;
-                decimal vp = basePrice;
-                if (m.Groups["price"].Success
-                    && decimal.TryParse(m.Groups["price"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var p))
-                    vp = p;
-                variants.Add(new RawVariant
-                {
-                    SourceSkuId = sku,
-                    Price = vp,
-                    Stock = soldOut ? 0 : 999,
-                    ImageUrl = mainImage,
-                });
-                if (variants.Count >= 100) break;   // 방어적 상한
-            }
+                var nm = OptionNameRegex.Match(sec);
+                if (!nm.Success) continue;
+                var name = System.Net.WebUtility.HtmlDecode(nm.Groups[1].Value).Trim();
+                if (name.Length == 0) continue;
 
-            // 전략 B: <select> 옵션 (A에서 아무것도 못 얻었을 때만)
-            if (byType.Count == 0)
-            {
-                foreach (Match sel in SelectRegex.Matches(html))
+                var values = new List<string>();
+
+                // 드롭다운형: __content 의 <li> 텍스트
+                var content = DropdownContentRegex.Match(sec);
+                if (content.Success)
                 {
-                    var values = new List<string>();
-                    foreach (Match opt in OptionTagRegex.Matches(sel.Groups["body"].Value))
+                    foreach (Match li in LiTextRegex.Matches(content.Value))
                     {
-                        var label = System.Net.WebUtility.HtmlDecode(opt.Groups["label"].Value).Trim();
-                        // 플레이스홀더("옵션 선택" 등)·빈 값 제외
-                        if (label.Length == 0 || label.Contains("선택", StringComparison.Ordinal)) continue;
-                        if (!values.Contains(label)) values.Add(label);
-                    }
-                    if (values.Count >= 2)   // 실제 옵션으로 볼 수 있는 최소 개수
-                    {
-                        byType[$"옵션{byType.Count + 1}"] = values;
-                        if (byType.Count >= 3) break;
+                        var v = System.Net.WebUtility.HtmlDecode(li.Groups[1].Value).Trim();
+                        if (v.Length > 0 && !values.Contains(v)) values.Add(v);
                     }
                 }
-            }
 
-            var groups = byType
-                .Select(kv => new RawOptionGroup(
-                    kv.Key,
-                    kv.Value.Select((v, i) => new RawOptionValue($"{kv.Key}:{i}", v, null)).ToList()))
-                .ToList();
-
-            // 변형을 못 찾았으면 단일 기본 변형 (기존 동작 보존)
-            if (variants.Count == 0)
-                variants.Add(new RawVariant
+                // 스와치형: __button-list 의 이미지 <li> 개수 + 선택 라벨
+                if (values.Count == 0)
                 {
-                    SourceSkuId = productId,
-                    Price = basePrice,
-                    Stock = soldOut ? 0 : 999,
-                    ImageUrl = mainImage,
-                });
+                    var blist = SwatchListRegex.Match(sec);
+                    if (blist.Success)
+                    {
+                        var cnt = SwatchLiRegex.Matches(blist.Value).Count;
+                        if (cnt > 0)
+                        {
+                            var sel = SelectedLabelRegex.Match(sec);
+                            values.Add(sel.Success
+                                ? $"{cnt}종 (선택:{System.Net.WebUtility.HtmlDecode(sel.Groups[1].Value).Trim()})"
+                                : $"{cnt}종");
+                        }
+                    }
+                }
 
-            return (groups, variants);
+                if (values.Count > 0)
+                    groups.Add(new RawOptionGroup(
+                        name, values.Select((v, i) => new RawOptionValue($"{name}:{i}", v, null)).ToList()));
+
+                if (groups.Count >= 5) break;   // 방어적 상한
+            }
         }
         catch
         {
-            // 파싱 실패는 치명적이지 않다 — 단일 변형으로 폴백.
-            return ([], [new RawVariant
-            {
-                SourceSkuId = productId, Price = basePrice, Stock = soldOut ? 0 : 999, ImageUrl = mainImage,
-            }]);
+            groups = [];   // 파싱 실패는 치명적이지 않다 — 옵션 없이 진행
         }
+
+        // 변형: 조합별 가격이 정적 HTML에 없으므로 단일 기본 변형만.
+        var variants = new List<RawVariant>
+        {
+            new()
+            {
+                SourceSkuId = productId,
+                Price = basePrice,
+                Stock = soldOut ? 0 : 999,
+                ImageUrl = mainImage,
+            },
+        };
+        return (groups, variants);
     }
 }
