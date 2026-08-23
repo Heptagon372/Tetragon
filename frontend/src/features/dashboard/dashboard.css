@@ -1,0 +1,44 @@
+/* 가로 막대 — 마크 스펙: 최대 두께 제한, 데이터 끝 4px 라운드, 베이스라인 쪽은 각짐 */
+
+.bars { display: flex; flex-direction: column; gap: 10px; }
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 64px;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-label {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-track {
+  height: 18px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* 비율(meter) 트랙은 같은 램프의 밝은 단계로 — 상태가 막대 전체에서 읽히도록 */
+.bar-track.meter { background: rgba(57, 135, 229, 0.15); }
+
+.bar-fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;   /* 데이터 끝만 라운드, 베이스라인은 각짐 */
+  min-width: 3px;
+  transition: width 0.35s ease;
+}
+
+.bar-value {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;   /* 세로 정렬이 필요한 열 */
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}

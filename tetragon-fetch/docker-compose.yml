@@ -1,0 +1,11 @@
+# 분산 실행: docker compose up --scale fetch=4
+services:
+  fetch:
+    build: .
+    environment:
+      - PORT=8080
+      - CHANNEL=            # 컨테이너 이미지엔 번들 chromium 사용(빈값)
+      - API_KEY=${FETCH_API_KEY:-}
+      - PROXY=${FETCH_PROXY:-}   # 주거용 프록시: http://user:pass@host:port
+    ports:
+      - "8080"             # 스케일 시 호스트 포트 자동 할당(앞단 LB/nginx 권장)

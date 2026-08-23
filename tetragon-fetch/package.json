@@ -1,0 +1,17 @@
+{
+  "name": "tetragon-fetch",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Tetragon anti-bot fetch sidecar (Playwright + stealth) — P1 test build",
+  "scripts": {
+    "probe": "node src/probe.js",
+    "serve": "node src/server.js"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "rebrowser-playwright": "^1.52.0"
+  }
+}

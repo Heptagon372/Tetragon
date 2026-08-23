@@ -1,0 +1,4 @@
+# Tetragon fetch 사이드카 (Python · Scrapling) — 검증된 쿠팡 우회 엔진
+scrapling[all]>=0.4.14
+# 브라우저 설치: pip install -r requirements.txt && scrapling install && patchright install --force chromium
+# 시스템 Google Chrome이 있으면 real_chrome=True(기본)로 번들 다운로드 없이 동작.

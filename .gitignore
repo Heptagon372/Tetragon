@@ -1,0 +1,30 @@
+bin/
+obj/
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.vs/
+.idea/
+*.user
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 스크래퍼 산출물/캐시/세션 (민감할 수 있음 — 커밋 금지)
+tetragon-fetch/.coupang_cache/
+tetragon-fetch/.coupang_session.json
+coupang_result.json
+tetragon-fetch/coupang_result.json
+*.log
+*.err
+*.png
+
+# 디버그 응답 덤프
+ap.json
+pf.json
+pf2.json

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tetragon.Application\Tetragon.Application.csproj" />
+    <ProjectReference Include="..\Tetragon.Infrastructure\Tetragon.Infrastructure.csproj" />
+    <ProjectReference Include="..\Tetragon.Plugins.Suppliers\Tetragon.Plugins.Suppliers.csproj" />
+    <ProjectReference Include="..\Tetragon.Plugins.Markets\Tetragon.Plugins.Markets.csproj" />
+    <ProjectReference Include="..\Tetragon.Plugins.Ai\Tetragon.Plugins.Ai.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+
+</Project>
